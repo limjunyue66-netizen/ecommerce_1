@@ -1,12 +1,18 @@
 <?php
 require_once __DIR__ . '/../config/config.php';
 
-$userAvatar = 'assets/image/default_avatar.png'; // 默认头像
+$userAvatar = public_url('asset/image/default_avatar.svg');
+$user = [
+    'FirstName' => 'Member',
+    'ProfilePhotoUrl' => '',
+    'UpdateDate' => null,
+];
+$searchQuery = trim((string)($_GET['productName'] ?? $_GET['search'] ?? $_GET['q'] ?? ''));
 
 if(isset($_SESSION['user_id'])){
-    $sql = "SELECT u.UserId, up.FirstName, up.LastName, up.ProfilePhotoUrl 
+    $sql = "SELECT u.UserId, up.FirstName, up.LastName, up.ProfilePhotoUrl, up.UpdateDate
             FROM Users u 
-            INNER JOIN UserProfile up ON u.UserId = up.UserId 
+            LEFT JOIN UserProfile up ON u.UserId = up.UserId 
             WHERE u.UserId = :user_id LIMIT 1";
 
     $stmt = $pdo->prepare($sql);
@@ -14,10 +20,29 @@ if(isset($_SESSION['user_id'])){
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if($user){
-        if(!empty($user['ProfilePhotoUrl'])){
-            $userAvatar = $user['ProfilePhotoUrl'];
+        $sessionFirstName = trim((string)($_SESSION['first_name'] ?? ''));
+        if ($sessionFirstName !== '') {
+            $user['FirstName'] = $sessionFirstName;
+        }
+
+        $sessionAvatar = trim((string)($_SESSION['profile_photo_url'] ?? ''));
+        $sessionAvatarVersion = trim((string)($_SESSION['profile_photo_version'] ?? ''));
+        $dbAvatarVersion = !empty($user['UpdateDate']) ? strtotime((string)$user['UpdateDate']) : time();
+
+        if($sessionAvatar !== ''){
+            $userAvatar = resolve_image_url($sessionAvatar, 'asset/image/default_avatar.svg') . '?v=' . ($sessionAvatarVersion !== '' ? $sessionAvatarVersion : $dbAvatarVersion);
+        } elseif(!empty($user['ProfilePhotoUrl'])){
+            $userAvatar = resolve_image_url($user['ProfilePhotoUrl'], 'asset/image/default_avatar.svg') . '?v=' . $dbAvatarVersion;
         }
     }
+}
+
+$userFirstName = trim((string)($user['FirstName'] ?? ''));
+if ($userFirstName === '') {
+    $userFirstName = trim((string)($_SESSION['first_name'] ?? ''));
+}
+if ($userFirstName === '') {
+    $userFirstName = 'Member';
 }
 ?>
 
@@ -43,13 +68,14 @@ if(isset($_SESSION['user_id'])){
 
         <div class="collapse navbar-collapse" id="navbarContent">
             <div class="nav-search-shell my-3 my-lg-0">
-                <form class="d-flex" action="index.php" method="get" role="search">
+                <form class="d-flex" action="product.php" method="get" role="search">
                     <input
                         class="form-control me-2"
                         type="search"
-                        name="q"
+                        name="productName"
                         placeholder="Search"
                         aria-label="Search"
+                        value="<?php echo htmlspecialchars($searchQuery, ENT_QUOTES, 'UTF-8'); ?>"
                     >
                     <button class="btn btn-outline-success" type="submit">Search</button>
                 </form>
@@ -64,7 +90,7 @@ if(isset($_SESSION['user_id'])){
                                  width="50" height="50" 
                                  alt="User Avatar" 
                                  style="object-fit: cover;">
-                            <span><?php echo htmlspecialchars($user['FirstName']); ?></span>
+                            <span><?php echo htmlspecialchars($userFirstName); ?></span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
                             <li><a class="dropdown-item" href="userProfile.php">Profile</a></li>

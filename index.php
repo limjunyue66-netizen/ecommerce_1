@@ -1,4 +1,54 @@
-<?php require_once 'config/config.php'; ?>
+<?php
+require_once 'config/config.php';
+
+$featuredCategories = [];
+
+function resolveCategoryIconUrl(?string $iconName): string
+{
+    $rawName = trim((string) $iconName);
+    if ($rawName === '') {
+        return resolve_image_url(null, 'asset/image/no-image.svg');
+    }
+
+    $safeName = basename(rawurldecode(str_replace('\\', '/', $rawName)));
+    $candidates = [
+        'asset/category_icons/' . $safeName,
+        'uploads/category_icons/' . $safeName,
+        'asset/products_images/' . $safeName,
+        'uploads/products_images/' . $safeName,
+    ];
+
+    foreach ($candidates as $relativePath) {
+        $absolutePath = __DIR__ . '/' . $relativePath;
+        if (is_file($absolutePath)) {
+            return public_url($relativePath);
+        }
+    }
+
+    if (preg_match('/^(?:https?:)?\/\//i', $rawName) || str_starts_with($rawName, 'data:')) {
+        return $rawName;
+    }
+
+    return public_url('asset/image/no-image.svg');
+}
+
+try {
+    $categoryStmt = $pdo->query(
+        "SELECT c.CategoryId,
+                c.CategoryName,
+                c.CategoryIcon,
+                COUNT(p.ProductId) AS ProductCount
+         FROM category c
+         LEFT JOIN Products p ON p.CategoryId = c.CategoryId
+         GROUP BY c.CategoryId, c.CategoryName, c.CategoryIcon, c.CreateDate
+         ORDER BY c.CreateDate DESC
+         LIMIT 6"
+    );
+    $featuredCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $featuredCategories = [];
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,7 +61,23 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <style>
-        body { font-family: 'Outfit', sans-serif; background: #f8fbf9; color: #1b2530; }
+        :root {
+            --home-ink: #1b2530;
+            --home-surface: #ffffff;
+            --home-line: #dbece5;
+            --home-accent: #0f8f6f;
+            --home-accent-dark: #0b6f56;
+            --home-shadow: 0 16px 32px rgba(11, 51, 39, 0.1);
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            color: var(--home-ink);
+            background:
+                radial-gradient(1300px 500px at 0% 0%, #eefbf5 0%, transparent 55%),
+                radial-gradient(950px 450px at 100% 20%, #edf4ff 0%, transparent 54%),
+                #f8fcfa;
+        }
 
         /* ── Hero ── */
         .hero {
@@ -157,16 +223,24 @@
             overflow: hidden;
             position: relative;
             height: 180px;
+            border: 1px solid var(--home-line);
             background: linear-gradient(135deg, #e3f5ef, #d4ede5);
             cursor: pointer;
             transition: transform .2s ease, box-shadow .2s ease;
             display: flex; align-items: flex-end;
         }
-        .category-card:hover { transform: translateY(-4px); box-shadow: 0 14px 28px rgba(10,36,60,.12); }
+        .category-card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to top, rgba(11, 111, 86, .58), rgba(11, 111, 86, .2) 38%, rgba(11, 111, 86, 0));
+            z-index: 1;
+        }
+        .category-card:hover { transform: translateY(-4px); box-shadow: var(--home-shadow); }
         .category-card .cc-inner {
             padding: 18px 20px;
-            background: linear-gradient(to top, rgba(11,111,86,.5), transparent);
             width: 100%;
+            z-index: 2;
         }
         .category-card .cc-inner strong { color: #fff; font-size: 1rem; font-weight: 700; display: block; }
         .category-card .cc-inner span { color: rgba(255,255,255,.8); font-size: 13px; }
@@ -175,6 +249,29 @@
             top: 16px; right: 20px;
             font-size: 2.4rem;
             opacity: .75;
+        }
+        .category-card .cc-image {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+            filter: saturate(1.05) contrast(1.03);
+        }
+
+        .section-panel {
+            border: 1px solid var(--home-line);
+            border-radius: 22px;
+            background: var(--home-surface);
+            box-shadow: var(--home-shadow);
+        }
+
+        .category-empty {
+            border: 1px dashed #b9ddd0;
+            background: #f3fbf7;
+            border-radius: 14px;
+            color: #2b5a4c;
         }
 
         /* ── CTA banner ── */
@@ -279,37 +376,39 @@
 <!-- ════════════════════ FEATURES ════════════════════ -->
 <section class="py-5 mt-2" id="features">
     <div class="container py-3">
-        <div class="text-center mb-5">
-            <span class="section-label">Why choose us</span>
-            <h2 class="section-title mt-1">Shopping made <em>effortless</em></h2>
-        </div>
-        <div class="row g-4">
-            <div class="col-sm-6 col-lg-3">
-                <div class="feature-card">
-                    <div class="feature-icon"><i class="fas fa-shipping-fast"></i></div>
-                    <h5>Free Shipping</h5>
-                    <p>Orders above RM 50 ship completely free to your doorstep.</p>
-                </div>
+        <div class="section-panel p-4 p-md-5">
+            <div class="text-center mb-5">
+                <span class="section-label">Why choose us</span>
+                <h2 class="section-title mt-1">Shopping made <em>effortless</em></h2>
             </div>
-            <div class="col-sm-6 col-lg-3">
-                <div class="feature-card">
-                    <div class="feature-icon"><i class="fas fa-shield-alt"></i></div>
-                    <h5>Secure Payments</h5>
-                    <p>Your data and transactions are protected end-to-end.</p>
+            <div class="row g-4">
+                <div class="col-sm-6 col-lg-3">
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="fas fa-shipping-fast"></i></div>
+                        <h5>Free Shipping</h5>
+                        <p>Orders above RM 50 ship completely free to your doorstep.</p>
+                    </div>
                 </div>
-            </div>
-            <div class="col-sm-6 col-lg-3">
-                <div class="feature-card">
-                    <div class="feature-icon"><i class="fas fa-undo-alt"></i></div>
-                    <h5>Easy Returns</h5>
-                    <p>Changed your mind? Return within 30 days, no questions asked.</p>
+                <div class="col-sm-6 col-lg-3">
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="fas fa-shield-alt"></i></div>
+                        <h5>Secure Payments</h5>
+                        <p>Your data and transactions are protected end-to-end.</p>
+                    </div>
                 </div>
-            </div>
-            <div class="col-sm-6 col-lg-3">
-                <div class="feature-card">
-                    <div class="feature-icon"><i class="fas fa-headset"></i></div>
-                    <h5>24/7 Support</h5>
-                    <p>Our team is always here to help you with any query.</p>
+                <div class="col-sm-6 col-lg-3">
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="fas fa-undo-alt"></i></div>
+                        <h5>Easy Returns</h5>
+                        <p>Changed your mind? Return within 30 days, no questions asked.</p>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-lg-3">
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="fas fa-headset"></i></div>
+                        <h5>24/7 Support</h5>
+                        <p>Our team is always here to help you with any query.</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -319,61 +418,38 @@
 <!-- ════════════════════ CATEGORIES ════════════════════ -->
 <section class="py-5 bg-white" id="categories">
     <div class="container py-3">
-        <div class="d-flex justify-content-between align-items-end mb-4 flex-wrap gap-2">
-            <div>
-                <span class="section-label">Browse</span>
-                <h2 class="section-title mt-1 mb-0">Shop by category</h2>
-            </div>
-            <a href="#" class="text-decoration-none text-success fw-semibold" style="font-size:14px;">View all <i class="fas fa-arrow-right ms-1"></i></a>
-        </div>
-        <div class="row g-3">
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="category-card" style="background:linear-gradient(135deg,#fef3e2,#fde8c8);">
-                    <span class="cc-emoji">👗</span>
-                    <div class="cc-inner" style="background:linear-gradient(to top,rgba(180,90,10,.5),transparent);">
-                        <strong>Fashion</strong><span>1,200+ items</span>
-                    </div>
+        <div class="section-panel p-4 p-md-5">
+            <div class="d-flex justify-content-between align-items-end mb-4 flex-wrap gap-2">
+                <div>
+                    <span class="section-label">Browse</span>
+                    <h2 class="section-title mt-1 mb-0">Shop by category</h2>
                 </div>
+                <a href="product.php" class="text-decoration-none text-success fw-semibold" style="font-size:14px;">View all <i class="fas fa-arrow-right ms-1"></i></a>
             </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="category-card" style="background:linear-gradient(135deg,#e8f0ff,#d5e4ff);">
-                    <span class="cc-emoji">💻</span>
-                    <div class="cc-inner" style="background:linear-gradient(to top,rgba(30,60,180,.5),transparent);">
-                        <strong>Electronics</strong><span>840+ items</span>
+            <div class="row g-3">
+            <?php if (!empty($featuredCategories)): ?>
+                <?php foreach ($featuredCategories as $category): ?>
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <a href="product.php?category=<?= urlencode((string)$category['CategoryId']) ?>" class="text-decoration-none">
+                            <div class="category-card" style="background:linear-gradient(135deg,#e5f5e8,#caecce);">
+                                <img
+                                    src="<?= htmlspecialchars(resolveCategoryIconUrl($category['CategoryIcon'] ?? null)) ?>"
+                                    alt="<?= htmlspecialchars((string)$category['CategoryName']) ?>"
+                                    class="cc-image"
+                                >
+                                <div class="cc-inner">
+                                    <strong><?= htmlspecialchars((string)$category['CategoryName']) ?></strong>
+                                    <span><?= (int)$category['ProductCount'] ?> item(s)</span>
+                                </div>
+                            </div>
+                        </a>
                     </div>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <div class="col-12">
+                    <div class="category-empty p-3 mb-0">No categories available yet.</div>
                 </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="category-card" style="background:linear-gradient(135deg,#fde8f0,#fcd0e0);">
-                    <span class="cc-emoji">💄</span>
-                    <div class="cc-inner" style="background:linear-gradient(to top,rgba(160,30,80,.5),transparent);">
-                        <strong>Beauty</strong><span>660+ items</span>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="category-card" style="background:linear-gradient(135deg,#e5f5e8,#caecce);">
-                    <span class="cc-emoji">🌿</span>
-                    <div class="cc-inner">
-                        <strong>Home & Garden</strong><span>980+ items</span>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="category-card" style="background:linear-gradient(135deg,#fff3e0,#ffe0b2);">
-                    <span class="cc-emoji">⚽</span>
-                    <div class="cc-inner" style="background:linear-gradient(to top,rgba(180,80,10,.5),transparent);">
-                        <strong>Sports</strong><span>520+ items</span>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="category-card" style="background:linear-gradient(135deg,#f3e5f5,#e1bee7);">
-                    <span class="cc-emoji">📚</span>
-                    <div class="cc-inner" style="background:linear-gradient(to top,rgba(100,30,140,.5),transparent);">
-                        <strong>Books</strong><span>340+ items</span>
-                    </div>
-                </div>
+            <?php endif; ?>
             </div>
         </div>
     </div>
@@ -393,7 +469,7 @@
                         Create Account <i class="fas fa-arrow-right ms-1"></i>
                     </a>
                 <?php else: ?>
-                    <a href="#categories" class="btn btn-cta-white">
+                    <a href="product.php" class="btn btn-cta-white">
                         Browse Products <i class="fas fa-arrow-right ms-1"></i>
                     </a>
                 <?php endif; ?>

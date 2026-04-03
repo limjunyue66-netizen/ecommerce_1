@@ -71,12 +71,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 exit();
             }
             $newName  = vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex(random_bytes(16)), 4)) . '.' . $fileExt;
-            $destPath = 'uploads/avatars/' . $newName;
+            $destPath = __DIR__ . '/uploads/avatars/' . $newName;
             if (!move_uploaded_file($_FILES['avatar']['tmp_name'], $destPath)) {
                 echo json_encode(['error' => 'Failed to upload avatar.']);
                 exit();
             }
-            $photoUrl = $destPath;
+            $photoUrl = public_url('uploads/avatars/' . $newName);
         }
 
         try {
@@ -92,7 +92,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     UpdateDate = NOW()"
             );
             $stmt->execute([$profileId, $userId, $firstName, $lastName, $phone, $photoUrl]);
-            echo json_encode(['message' => 'Profile updated successfully.', 'photo' => $photoUrl]);
+
+            $freshProfileStmt = $pdo->prepare("SELECT FirstName, LastName, ProfilePhotoUrl FROM UserProfile WHERE UserId = ? LIMIT 1");
+            $freshProfileStmt->execute([$userId]);
+            $freshProfile = $freshProfileStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $currentFirstName = trim((string)($freshProfile['FirstName'] ?? $firstName));
+            $currentLastName = trim((string)($freshProfile['LastName'] ?? $lastName));
+            $currentPhotoUrl = (string)($freshProfile['ProfilePhotoUrl'] ?? $photoUrl ?? '');
+            $resolvedPhotoUrl = resolve_image_url($currentPhotoUrl, 'asset/image/default_avatar.svg');
+
+            $_SESSION['first_name'] = $currentFirstName !== '' ? $currentFirstName : ($_SESSION['first_name'] ?? 'Member');
+            $_SESSION['last_name'] = $currentLastName;
+            $_SESSION['profile_photo_url'] = $currentPhotoUrl;
+            $_SESSION['profile_photo_version'] = time();
+
+            echo json_encode([
+                'message' => 'Profile updated successfully.',
+                'photo' => $resolvedPhotoUrl,
+                'first_name' => $currentFirstName,
+                'last_name' => $currentLastName,
+            ]);
         } catch (Exception $e) {
             echo json_encode(['error' => 'Failed to update profile.']);
         }
@@ -295,17 +315,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 $stmt = $pdo->prepare(
     "SELECT u.Email, up.FirstName, up.LastName, up.PhoneNumber, up.ProfilePhotoUrl
      FROM Users u
-     JOIN UserProfile up ON u.UserId = up.UserId
+     LEFT JOIN UserProfile up ON u.UserId = up.UserId
      WHERE u.UserId = ? LIMIT 1"
 );
 $stmt->execute([$userId]);
-$profile = $stmt->fetch();
+$profile = $stmt->fetch() ?: [
+    'Email' => '',
+    'FirstName' => '',
+    'LastName' => '',
+    'PhoneNumber' => '',
+    'ProfilePhotoUrl' => '',
+];
 
 $addrStmt = $pdo->prepare("SELECT * FROM Addresses WHERE UserId = ? ORDER BY IsDefault DESC");
 $addrStmt->execute([$userId]);
 $addresses = $addrStmt->fetchAll();
+$useDetailedAddress = supportsDetailedAddressColumns($pdo);
 
-$avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/default_avatar.png');
+$avatarSrc = htmlspecialchars(resolve_image_url($profile['ProfilePhotoUrl'] ?? null, 'asset/image/default_avatar.svg'));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -313,31 +340,226 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>E-commerce || My Profile</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <style>
-        body { background-color: #f8f9fa; }
-        .avatar-circle { width: 80px; height: 80px; object-fit: cover; }
-        .avatar-preview { width: 100px; height: 100px; object-fit: cover; }
-        .toast-shell { position: fixed; top: 70px; right: 20px; z-index: 9999; min-width: 280px; }
-        .list-group-item.active { background-color: #0d6efd; border-color: #0d6efd; }
+        :root {
+            --profile-ink: #1b2530;
+            --profile-muted: #6b7c8d;
+            --profile-line: #dbece5;
+            --profile-accent: #0f8f6f;
+            --profile-accent-dark: #0b6f56;
+            --profile-shadow: 0 16px 32px rgba(11, 51, 39, 0.1);
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            color: var(--profile-ink);
+            background:
+                radial-gradient(1300px 500px at 0% 0%, #eefbf5 0%, transparent 55%),
+                radial-gradient(950px 450px at 100% 20%, #edf4ff 0%, transparent 54%),
+                #f8fcfa;
+        }
+
+        .profile-hero {
+            background:
+                radial-gradient(circle at 10% 25%, rgba(15,143,111,.16), transparent 38%),
+                radial-gradient(circle at 88% 72%, rgba(39,124,198,.14), transparent 34%),
+                linear-gradient(135deg, #f0faf5, #e6f4ff);
+            border: 1px solid var(--profile-line);
+            border-radius: 24px;
+            box-shadow: var(--profile-shadow);
+        }
+
+        .profile-kicker {
+            display: inline-block;
+            background: rgba(15,143,111,.12);
+            color: #0b6f56;
+            border: 1px solid rgba(15,143,111,.25);
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            padding: 5px 12px;
+            margin-bottom: 10px;
+        }
+
+        .profile-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: clamp(1.8rem, 3vw, 2.4rem);
+            font-weight: 800;
+            letter-spacing: -.02em;
+            margin: 0;
+        }
+
+        .profile-subtitle {
+            color: var(--profile-muted);
+            margin: 0;
+            max-width: 52ch;
+        }
+
+        .section-panel,
+        .profile-card,
+        .address-card,
+        .tab-card {
+            border: 1px solid var(--profile-line);
+            border-radius: 20px;
+            background: #fff;
+            box-shadow: var(--profile-shadow);
+        }
+
+        .avatar-circle {
+            width: 84px;
+            height: 84px;
+            object-fit: cover;
+            border: 3px solid rgba(15,143,111,.14);
+        }
+
+        .avatar-preview {
+            width: 112px;
+            height: 112px;
+            object-fit: cover;
+            border: 3px solid rgba(15,143,111,.14);
+        }
+
+        .toast-shell {
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            z-index: 9999;
+            min-width: 280px;
+        }
+
+        .profile-sidebar .list-group-item {
+            border: 1px solid var(--profile-line);
+            color: var(--profile-ink);
+            font-weight: 600;
+            padding: 0.9rem 1rem;
+            background: #fff;
+        }
+
+        .profile-sidebar .list-group-item + .list-group-item {
+            border-top: 0;
+        }
+
+        .profile-sidebar .list-group-item.active {
+            background: linear-gradient(135deg, var(--profile-accent), var(--profile-accent-dark));
+            border-color: var(--profile-accent-dark);
+        }
+
+        .profile-sidebar .list-group-item:hover:not(.active) {
+            background: #f4fbf8;
+        }
+
+        .profile-card h5,
+        .tab-card h5,
+        .tab-card h6 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+            letter-spacing: -.015em;
+        }
+
+        .form-label {
+            font-weight: 600;
+            color: #234038;
+        }
+
+        .form-control,
+        .form-select {
+            border-radius: 12px;
+            border-color: #d8e7e1;
+            padding-top: 0.72rem;
+            padding-bottom: 0.72rem;
+        }
+
+        .form-control:focus,
+        .form-select:focus {
+            border-color: rgba(15,143,111,.45);
+            box-shadow: 0 0 0 .2rem rgba(15,143,111,.12);
+        }
+
+        .btn-primary-custom {
+            background: linear-gradient(135deg, var(--profile-accent), var(--profile-accent-dark));
+            border: none;
+            border-radius: 12px;
+            color: #fff;
+            font-weight: 700;
+            padding: 0.78rem 1.1rem;
+            transition: transform .15s ease, box-shadow .15s ease;
+        }
+
+        .btn-primary-custom:hover {
+            color: #fff;
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(11,111,86,.22);
+        }
+
+        .btn-outline-custom {
+            border: 1.5px solid rgba(27,37,48,.18);
+            border-radius: 12px;
+            color: #1b2530;
+            font-weight: 600;
+            background: rgba(255,255,255,.75);
+        }
+
+        .btn-outline-custom:hover {
+            border-color: var(--profile-accent);
+            color: var(--profile-accent-dark);
+            background: rgba(15,143,111,.06);
+        }
+
+        .address-card + .address-card {
+            margin-top: 0.75rem;
+        }
+
+        .address-card {
+            padding: 1rem;
+        }
+
+        .address-card .badge {
+            border-radius: 999px;
+            padding: 0.45rem 0.65rem;
+        }
+
+        .tab-pane .card,
+        .tab-pane .profile-card {
+            border-radius: 20px;
+        }
     </style>
 </head>
 <body>
 <?php include 'layout/nav.php'; ?>
 
-<div class="container py-5">
+<div class="container py-4 py-md-5">
+    <section class="profile-hero p-4 p-md-5 mb-4">
+        <div class="d-flex flex-column flex-md-row align-items-md-end justify-content-between gap-3">
+            <div>
+                <span class="profile-kicker">Account center</span>
+                <h1 class="profile-title">Manage your profile, password, and addresses</h1>
+                <p class="profile-subtitle mt-2">Keep your account details and shipping addresses in sync across the store.</p>
+            </div>
+            <div class="text-md-end">
+                <div class="small text-muted">Signed in as</div>
+                <div class="fw-bold fs-5"><?php echo htmlspecialchars($profile['Email'] ?? ''); ?></div>
+            </div>
+        </div>
+    </section>
+
     <div class="row g-4">
 
         <!-- Sidebar -->
-        <div class="col-md-3">
-            <div class="card text-center p-3 mb-3">
+        <div class="col-md-3 profile-sidebar">
+            <div class="profile-card text-center p-3 mb-3">
                 <img src="<?php echo $avatarSrc; ?>" id="sidebarAvatar"
                      class="rounded-circle mx-auto d-block mb-2 avatar-circle" alt="Avatar">
-                <h6 class="mb-0"><?php echo htmlspecialchars(($profile['FirstName'] ?? '') . ' ' . ($profile['LastName'] ?? '')); ?></h6>
+                 <h6 class="mb-0" id="sidebarName"><?php echo htmlspecialchars(trim(($profile['FirstName'] ?? '') . ' ' . ($profile['LastName'] ?? ''))); ?></h6>
                 <small class="text-muted"><?php echo htmlspecialchars($profile['Email'] ?? ''); ?></small>
             </div>
-            <div class="list-group" id="profileTabs">
+            <div class="list-group section-panel overflow-hidden" id="profileTabs">
                 <a href="#tab-profile"  class="list-group-item list-group-item-action active" data-bs-toggle="list">
                     <i class="fas fa-user me-2"></i>Edit Profile
                 </a>
@@ -356,7 +578,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
 
                 <!-- Tab 1: Edit Profile -->
                 <div class="tab-pane fade show active" id="tab-profile">
-                    <div class="card p-4">
+                    <div class="profile-card p-4 p-md-5">
                         <h5 class="mb-4">Edit Profile</h5>
                         <div class="text-center mb-3">
                             <img src="<?php echo $avatarSrc; ?>" id="avatarPreview"
@@ -386,7 +608,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                                 <input type="text" class="form-control" name="phone"
                                        value="<?php echo htmlspecialchars($profile['PhoneNumber'] ?? ''); ?>">
                             </div>
-                            <button type="submit" class="btn btn-primary">
+                            <button type="submit" class="btn btn-primary-custom">
                                 <i class="fas fa-save me-1"></i>Save Changes
                             </button>
                         </form>
@@ -395,7 +617,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
 
                 <!-- Tab 2: Change Password -->
                 <div class="tab-pane fade" id="tab-password">
-                    <div class="card p-4">
+                    <div class="profile-card p-4 p-md-5">
                         <h5 class="mb-4">Change Password</h5>
                         <form id="formPassword" style="max-width: 480px;">
                             <input type="hidden" name="action" value="change_password">
@@ -411,7 +633,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                                 <label class="form-label">Confirm New Password</label>
                                 <input type="password" class="form-control" name="confirm_password" required minlength="8">
                             </div>
-                            <button type="submit" class="btn btn-primary">
+                            <button type="submit" class="btn btn-primary-custom">
                                 <i class="fas fa-key me-1"></i>Change Password
                             </button>
                         </form>
@@ -420,7 +642,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
 
                 <!-- Tab 3: Addresses -->
                 <div class="tab-pane fade" id="tab-address">
-                    <div class="card p-4">
+                    <div class="profile-card p-4 p-md-5">
                         <h5 class="mb-4">My Addresses</h5>
 
                         <!-- Saved addresses -->
@@ -446,7 +668,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                                         $displayAddress = $addr['FullAddress'];
                                     }
                                 ?>
-                                <div class="border rounded p-3 mb-2">
+                                <div class="address-card">
                                     <div class="d-flex justify-content-between align-items-start gap-2">
                                         <div class="fw-semibold">
                                             <?php echo htmlspecialchars($addr['RecipientName']); ?>
@@ -456,7 +678,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                                         </div>
                                         <div class="d-flex gap-2 flex-shrink-0">
                                             <button type="button"
-                                                    class="btn btn-outline-secondary btn-sm editAddressBtn"
+                                                    class="btn btn-outline-custom btn-sm editAddressBtn"
                                                     data-address-id="<?php echo htmlspecialchars($addr['AddressId'], ENT_QUOTES); ?>"
                                                     data-recipient-name="<?php echo htmlspecialchars($addr['RecipientName'], ENT_QUOTES); ?>"
                                                     data-phone="<?php echo htmlspecialchars($addr['PhoneNumber'], ENT_QUOTES); ?>"
@@ -472,7 +694,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                                                 <form class="setDefaultForm m-0">
                                                     <input type="hidden" name="action" value="set_default_address">
                                                     <input type="hidden" name="address_id" value="<?php echo htmlspecialchars($addr['AddressId']); ?>">
-                                                    <button type="submit" class="btn btn-outline-primary btn-sm">Set Default</button>
+                                                    <button type="submit" class="btn btn-outline-custom btn-sm">Set Default</button>
                                                 </form>
                                             <?php endif; ?>
                                             <form class="deleteAddressForm m-0">
@@ -511,19 +733,19 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                                 <label class="form-label">Address Line 2</label>
                                 <input type="text" class="form-control" name="address_line2">
                             </div>
-                            <div class="mb-3">
+                            <div class="mb-3" <?= $useDetailedAddress ? '' : 'style="display:none;"' ?>>
                                 <label class="form-label">State</label>
                                 <select class="form-control" name="states" id="states" disabled>
                                     <option value="">Loading states...</option>
                                 </select>
                             </div>
-                            <div class="mb-3">
+                            <div class="mb-3" <?= $useDetailedAddress ? '' : 'style="display:none;"' ?>>
                                 <label class="form-label">City</label>
                                 <select class="form-control" name="cities" id="cities" disabled>
                                     <option value="">Select City</option>
                                 </select>
                             </div>
-                            <div class="mb-3">
+                            <div class="mb-3" <?= $useDetailedAddress ? '' : 'style="display:none;"' ?>>
                                 <label class="form-label">Postcode</label>
                                 <select class="form-control" name="postcodes" id="postcode" disabled>
                                     <option value="">Select Postcode</option>
@@ -534,7 +756,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                                 <input type="checkbox" class="form-check-input" name="is_default" id="isDefault">
                                 <label class="form-check-label" for="isDefault">Set as default address</label>
                             </div>
-                            <button type="submit" class="btn btn-primary">
+                            <button type="submit" class="btn btn-primary-custom">
                                 <i class="fas fa-plus me-1"></i>Add Address
                             </button>
                         </form>
@@ -574,19 +796,19 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                         <label class="form-label">Address Line 2</label>
                         <input type="text" class="form-control" name="address_line2" id="editAddressLine2">
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" <?= $useDetailedAddress ? '' : 'style="display:none;"' ?>>
                         <label class="form-label">State</label>
                         <select class="form-control" name="states" id="editStates" disabled>
                             <option value="">Loading states...</option>
                         </select>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" <?= $useDetailedAddress ? '' : 'style="display:none;"' ?>>
                         <label class="form-label">City</label>
                         <select class="form-control" name="cities" id="editCities" disabled>
                             <option value="">Select state first</option>
                         </select>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" <?= $useDetailedAddress ? '' : 'style="display:none;"' ?>>
                         <label class="form-label">Postcode</label>
                         <select class="form-control" name="postcodes" id="editPostcode" disabled>
                             <option value="">Select city first</option>
@@ -598,8 +820,8 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Address</button>
+                    <button type="button" class="btn btn-outline-custom" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary-custom">Save Address</button>
                 </div>
             </form>
         </div>
@@ -611,6 +833,7 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    const useDetailedAddress = <?= $useDetailedAddress ? 'true' : 'false' ?>;
     let postcodeDataset = [];
 
     function setSelectOptions(selectEl, placeholder, values) {
@@ -654,6 +877,10 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
     }
 
     async function loadMalaysiaPostcodes() {
+        if (!useDetailedAddress) {
+            return;
+        }
+
         const stateEl = document.getElementById('states');
         const cityEl = document.getElementById('cities');
         const postcodeEl = document.getElementById('postcode');
@@ -720,6 +947,10 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
     }
 
     function attachAddressSelectors() {
+        if (!useDetailedAddress) {
+            return;
+        }
+
         const stateEl = document.getElementById('states');
         const cityEl = document.getElementById('cities');
         const postcodeEl = document.getElementById('postcode');
@@ -769,7 +1000,8 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
 
     function ajaxForm(formEl) {
         return fetch('userProfile.php', { method: 'POST', body: new FormData(formEl) })
-            .then(r => r.json());
+            .then((response) => response.json())
+            .catch(() => ({ error: 'Request failed. Please try again.' }));
     }
 
     // Avatar live preview
@@ -784,10 +1016,16 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
         e.preventDefault();
         ajaxForm(this).then(res => {
             showToast(res.message || res.error, res.error ? 'error' : 'success');
-            if (res.message && res.photo) {
-                const avatarUrl = res.photo + '?v=' + Date.now();
+            if (res.message) {
+                const avatarUrl = (res.photo || 'asset/image/default_avatar.svg') + '?v=' + Date.now();
                 document.getElementById('sidebarAvatar').src = avatarUrl;
                 document.getElementById('avatarPreview').src = avatarUrl;
+
+                const sidebarName = document.getElementById('sidebarName');
+                if (sidebarName) {
+                    const fullName = ((res.first_name || '') + ' ' + (res.last_name || '')).trim();
+                    sidebarName.textContent = fullName || 'Member';
+                }
 
                 const navAvatar = document.querySelector('#userDropdown img');
                 if (navAvatar) {
@@ -885,8 +1123,10 @@ $avatarSrc = htmlspecialchars($profile['ProfilePhotoUrl'] ?? 'asset/image/defaul
         });
     });
 
-    loadMalaysiaPostcodes();
-    attachAddressSelectors();
+    if (useDetailedAddress) {
+        loadMalaysiaPostcodes();
+        attachAddressSelectors();
+    }
 </script>
 </body>
 </html>

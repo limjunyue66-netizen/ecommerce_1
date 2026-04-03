@@ -2,9 +2,20 @@
 
 include_once 'config/config.php';
 
+if (isset($_SESSION['user_id'])) {
+    header('Location: index.php');
+    exit();
+}
+
 if($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $email = $_POST['email'];
+    $email = trim((string)($_POST['email'] ?? ''));
     $password = $_POST['password'];
+
+    if ($email === '' || $password === '') {
+        http_response_code(422);
+        echo 'Please enter both email and password.';
+        exit();
+    }
 
     // 查询用户及其关联的角色名称
     $sql = "SELECT * 
@@ -19,22 +30,41 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     if($user){
         if($user['IsActive'] == 0){
-            die(json_encode(["message" => "Your account is inactive. Please contact support."]));
+            http_response_code(403);
+            echo 'Your account is inactive. Please contact support.';
+            exit();
         }
         if(password_verify($password, $user['PasswordHash'])){
             // 登录成功，设置 Session
             $_SESSION['user_id'] = $user['UserId'];
             $_SESSION['role'] = $user['RoleName'];
-            
-            echo json_encode(["message" => "Login Success....."]);
+
+            $profileStmt = $pdo->prepare(
+                "SELECT FirstName, ProfilePhotoUrl, UpdateDate
+                 FROM UserProfile
+                 WHERE UserId = ?
+                 LIMIT 1"
+            );
+            $profileStmt->execute([$user['UserId']]);
+            $profile = $profileStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $_SESSION['first_name'] = $profile['FirstName'] ?? 'Member';
+            $_SESSION['profile_photo_url'] = $profile['ProfilePhotoUrl'] ?? '';
+            $_SESSION['profile_photo_version'] = !empty($profile['UpdateDate'])
+                ? strtotime((string) $profile['UpdateDate'])
+                : time();
+
             header("Location: index.php");
+            exit();
         } else {
             http_response_code(401);
-            echo json_encode(["message" => "Invalid email or password."]);
+            echo 'Invalid email or password.';
+            exit();
         }
     }else {
             http_response_code(401);
-            echo json_encode(["message" => "User does not exist."]);
+            echo 'User does not exist.';
+            exit();
         }
 }
 

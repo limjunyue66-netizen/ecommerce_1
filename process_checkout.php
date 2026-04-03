@@ -641,7 +641,7 @@ if ($address) {
                             <div class="row g-3 align-items-center">
                                 <div class="col-auto">
                                     <img
-                                        src="<?= htmlspecialchars($item['MainImage'] ?: 'asset/image/no-image.jpg') ?>"
+                                        src="<?= htmlspecialchars(resolve_image_url($item['MainImage'] ?? null)) ?>"
                                         alt="<?= htmlspecialchars($item['ProductName']) ?>"
                                         class="item-image"
                                     >

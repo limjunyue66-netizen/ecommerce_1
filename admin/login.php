@@ -46,6 +46,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             // 4. 登录成功，设置管理员 Session
             $_SESSION['admin_id'] = $user['UserId'];
             $_SESSION['role'] = $user['RoleName'];
+            $_SESSION['email'] = $email;
 
             sendJsonResponse(200, 'Login successful. Redirecting...', ['redirect' => 'admin_dashboard.php']);
         } else {

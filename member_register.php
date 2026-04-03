@@ -3,15 +3,16 @@
 include_once 'config/config.php';
 
 if($_SERVER['REQUEST_METHOD'] === 'POST'){
-    $email = $_POST['email'];
+    $email = trim((string)($_POST['email'] ?? ''));
     $password = $_POST['pass'];
     $confirmPassword = $_POST['confirm_pass'];
-    $firstName = $_POST['first_name'];
-    $lastName = $_POST['last_name'];
-    $phone = $_POST['phone'];
+    $firstName = trim((string)($_POST['first_name'] ?? ''));
+    $lastName = trim((string)($_POST['last_name'] ?? ''));
+    $phone = trim((string)($_POST['phone'] ?? ''));
 
-    $targetDir = "uploads/avatars/";
-    $defaultAvatar = "asset/image/default_avatar.png";
+    $targetDir = __DIR__ . "/uploads/avatars/";
+    $publicAvatarDir = public_url('uploads/avatars/');
+    $defaultAvatar = public_url('asset/image/default_avatar.svg');
     $profilePhotoUrl = $defaultAvatar;
 
     if(isset($_FILES['avatar']) && $_FILES['avatar']['error']=== UPLOAD_ERR_OK){
@@ -26,7 +27,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
             $destPath = $targetDir . $newFileName;
 
             if(move_uploaded_file($fileTmpPath, $destPath)){
-                $profilePhotoUrl = $destPath;
+                $profilePhotoUrl = $publicAvatarDir . $newFileName;
             } else {
                 echo json_encode(["error" => "Failed to upload avatar."]);
                 exit();
@@ -35,14 +36,15 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     }
 
     try{
-        $pdo->beginTransaction();
-
-        $userId = vsprintf('%s%s-%s-%s-%s-%s%s%s',str_split(bin2hex(random_bytes(16)),4));
-
         if($password !== $confirmPassword){
             echo json_encode(["error" => "Passwords do not match."]);
             exit();
         }
+
+        $pdo->beginTransaction();
+
+        $userId = vsprintf('%s%s-%s-%s-%s-%s%s%s',str_split(bin2hex(random_bytes(16)),4));
+
         $passwordHash = password_hash($confirmPassword,PASSWORD_DEFAULT);
 
         $roleStmt = $pdo->prepare("SELECT RoleId FROM Roles WHERE `RoleName` =  'Member' LIMIT 1");
